@@ -15,5 +15,4 @@ dist/
 # 个人数据（不要提交自己的库存/练度）
 app/arknights.db.bak
 _src/
-app/icons/operators/
 
