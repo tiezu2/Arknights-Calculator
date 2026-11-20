@@ -87,6 +87,28 @@ tools\              重新抓取数据的说明
 docs\               截图
 ```
 
+## 仓库结构
+
+```
+app\            桌面程序源码 + SQLite 数据库
+  icons\materials\    98 张材料图标
+  icons\operators\    469 张干员头像（来自 PRTS）
+data\           干员 / 材料 / 等级表 / 物品映射 JSON
+tools\          重新抓取数据的说明
+docs\           界面截图
+```
+
+克隆与运行：
+
+```bat
+git clone https://github.com/tiezu2/Arknights-Calculator.git
+cd Arknights-Calculator
+pip install -r requirements.txt
+python app\app_desktop.py
+```
+
+> 仓库约 11 MB。国内网络访问 GitHub 受限时可配置代理或使用镜像。
+
 ## 数据与版权
 
 - 计算逻辑与干员/材料数据提取自 **cn.ark-nights.com**（V2.23.20 前端 bundle）
