@@ -92,6 +92,72 @@ class Planner:
             except Exception:
                 pass
         self.config = self._load_config()
+        self.stage_meta = {}      # stageId -> {stageType, existence(CN), zoneId}
+        self.zone_name = {}       # zoneId -> zoneName
+        self._load_stage_meta()
+
+    def _cache_path(self, name):
+        if self.cache_dir:
+            p = os.path.join(self.cache_dir, name)
+            if os.path.exists(p):
+                return p
+        try:
+            import penguin
+            p = os.path.join(penguin.CACHE, name)
+            return p if os.path.exists(p) else None
+        except Exception:
+            return None
+
+    def _load_stage_meta(self):
+        self.stage_meta, self.zone_name = {}, {}
+        p = self._cache_path("stages.json")
+        if p:
+            try:
+                for st in json.load(open(p, encoding="utf-8")):
+                    sid = st.get("stageId")
+                    if sid:
+                        self.stage_meta[sid] = {
+                            "stageType": st.get("stageType"),
+                            "zoneId": st.get("zoneId"),
+                            "cn": (st.get("existence") or {}).get("CN") or {},
+                        }
+            except Exception:
+                pass
+        p = self._cache_path("zones.json")
+        if p:
+            try:
+                for z in json.load(open(p, encoding="utf-8")):
+                    if z.get("zoneId"):
+                        self.zone_name[z["zoneId"]] = z.get("zoneName") or ""
+            except Exception:
+                pass
+
+    def stage_status(self, stage_id, code="", zone=""):
+        """返回活动关状态：{is_event, open, rerun, until}"""
+        meta = self.stage_meta.get(stage_id) or {}
+        cn = meta.get("cn") or {}
+        zone_id = meta.get("zoneId")
+        zname = zone or self.zone_name.get(zone_id, "")
+        is_event = (meta.get("stageType") == "ACTIVITY") or str(stage_id).startswith("act")
+        rerun = str(stage_id).endswith("_rep") or ("复刻" in (zname or ""))
+        now_ms = int(__import__("time").time() * 1000)
+        open_t = cn.get("openTime") or 0
+        close_t = cn.get("closeTime") or 0
+        if not is_event:
+            opened = True
+        elif open_t and close_t:
+            opened = open_t <= now_ms <= close_t
+        else:
+            opened = False      # 活动关缺少时间信息：按「未开放」处理，避免误当成常驻
+        until = ""
+        if close_t:
+            import datetime
+            until = datetime.datetime.fromtimestamp(close_t / 1000).strftime("%Y-%m-%d")
+        recent = False
+        if close_t and open_t:
+            recent = (close_t <= now_ms) and (now_ms - close_t <= 14 * 86400000)
+        return {"is_event": is_event, "open": opened, "rerun": rerun, "until": until,
+                "zone": zname, "recent": recent, "open_time": open_t, "close_time": close_t}
 
     def _load_config(self):
         cands = []
@@ -117,8 +183,37 @@ class Planner:
                 return mid
         return None
 
+    def event_summary(self):
+        """当期正在开放 / 最近结束的活动（供 UI 提示）"""
+        now_ms = int(__import__("time").time() * 1000)
+        open_z, recent_z = {}, {}
+        for sid, meta in self.stage_meta.items():
+            if meta.get("stageType") != "ACTIVITY":
+                continue
+            cn = meta.get("cn") or {}
+            zid = meta.get("zoneId")
+            name = self.zone_name.get(zid) or zid
+            o, c = cn.get("openTime") or 0, cn.get("closeTime") or 0
+            if not (o and c):
+                continue
+            if o <= now_ms <= c:
+                open_z[name] = {"name": name, "close": c}
+            elif c <= now_ms and (now_ms - c) <= 14 * 86400000:
+                if name not in recent_z or c > recent_z[name]["close"]:
+                    recent_z[name] = {"name": name, "close": c}
+        import datetime
+
+        def fmt(ms):
+            return datetime.datetime.fromtimestamp(ms / 1000).strftime("%m-%d %H:%M")
+
+        return {
+            "open": [{"name": k, "close": fmt(v["close"])} for k, v in open_z.items()],
+            "recent": [{"name": k, "close": fmt(v["close"])} for k, v in recent_z.items()][:6],
+        }
+
     # ---------------- 掉落 ----------------
-    def stages_of(self, name, min_times=MIN_TIMES, perm_only=True):
+    def stages_of(self, name, min_times=MIN_TIMES, perm_only=True,
+                  include_events="open", include_rerun=True):
         pid = self.pid_by_name.get(name)
         if not pid:
             return []
@@ -129,14 +224,27 @@ class Planner:
             ap = r.get("apCost") or 0
             if times < min_times or rate <= 0 or rate > MAX_RATE or ap <= 0:
                 continue
-            if perm_only and not str(r.get("stageId", "")).startswith(PERM_PREFIX):
-                continue
+            sid = str(r.get("stageId", ""))
+            st = self.stage_status(sid, r.get("stage"), r.get("zone"))
+            if st["is_event"]:
+                if include_events == "none":
+                    continue
+                if st["rerun"] and not include_rerun:
+                    continue
+                if include_events == "open" and not st["open"]:
+                    continue
+                if include_events == "recent" and not (st["open"] or st["recent"]):
+                    continue
+            elif perm_only is False and not st["is_event"]:
+                pass
             code = r.get("stage")
             if code in seen:          # 同名关卡（标准/磨难、多时间窗）只留最优
                 continue
             seen.add(code)
-            out.append({"stage": code, "stage_id": r.get("stageId"), "zone": r.get("zone"),
-                        "ap": ap, "rate": rate, "times": times, "ap_item": ap / rate})
+            out.append({"stage": code, "stage_id": r.get("stageId"), "zone": r.get("zone") or st["zone"],
+                        "ap": ap, "rate": rate, "times": times, "ap_item": ap / rate,
+                        "event": st["is_event"], "rerun": st["rerun"],
+                        "until": st["until"], "open": st["open"]})
         out.sort(key=lambda x: x["ap_item"])
         return out
 
@@ -243,7 +351,7 @@ class Planner:
         return sorted(agg.values(), key=lambda x: x["name"])
 
     # ---------------- 候选方案 ----------------
-    def options_for(self, name, mid, miss, topn=3):
+    def options_for(self, name, mid, miss, topn=4, include_events="open", include_rerun=True):
         """返回该材料的全部候选方案（direct / synth / buy / pack）"""
         opts = []
         # 货币类（龙门币/采购凭证）：按固定关卡产出折算
@@ -261,7 +369,8 @@ class Planner:
             })
             return opts
         # 直刷
-        for s in self.stages_of(name)[:topn]:
+        for s in self.stages_of(name, include_events=include_events,
+                                include_rerun=include_rerun)[:topn]:
             opts.append({
                 "id": f"d:{s['stage']}", "type": "direct", "stage": s["stage"],
                 "ap": s["ap"], "rate": s["rate"], "times": s["times"],
@@ -269,6 +378,8 @@ class Planner:
                 "runs": round(miss / s["rate"], 1),
                 "sanity": round(s["ap_item"] * miss),
                 "time_min": round(miss / s["rate"] * 1.5),      # 每关约 1.5 分钟
+                "event": s.get("event", False), "rerun": s.get("rerun", False),
+                "until": s.get("until", ""), "zone": s.get("zone", ""),
             })
         # 合成
         syn = self.synth_cost(mid) if mid else None
@@ -331,12 +442,14 @@ class Planner:
         return min(opts, key=lambda o: (o["sanity"], o["runs"]))
 
     # ---------------- 规划 ----------------
-    def plan(self, needs=None, mode=MODE_NORMAL, uid=None):
+    def plan(self, needs=None, mode=MODE_NORMAL, uid=None,
+             include_events="open", include_rerun=True):
         needs = self.needs(uid) if needs is None else needs
         rows = []
         for n in needs:
             name, mid, miss = n["name"], n["id"], max(0, n["miss"])
-            opts = self.options_for(name, mid, miss) if miss > 0 else []
+            opts = (self.options_for(name, mid, miss, include_events=include_events,
+                                     include_rerun=include_rerun) if miss > 0 else [])
             chosen = self._pick(opts, mode) if opts else None
             if name == EXP_MATERIAL:
                 rows.append({**n, "options": [], "chosen": None, "mode": "已包含",
@@ -363,7 +476,10 @@ class Planner:
                 continue
             st = c["stage"]
             rec = stages.setdefault(st, {"stage": st, "ap": c["ap"], "runs": 0.0,
-                                         "ap_total": 0.0, "items": []})
+                                         "ap_total": 0.0, "items": [],
+                                         "event": c.get("event", False),
+                                         "rerun": c.get("rerun", False),
+                                         "until": c.get("until", "")})
             rec["runs"] = max(rec["runs"], c["runs"])
             rec["items"].append(r["name"])
         for rec in stages.values():

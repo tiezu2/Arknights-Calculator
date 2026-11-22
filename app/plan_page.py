@@ -29,6 +29,7 @@ class PlanPage(QWidget):
         self.calc = calc
         self.mode = MODE_NORMAL
         self.uid = None
+        self.evt = "open"
         self.result = None
         self.planner = None
 
@@ -58,6 +59,18 @@ class PlanPage(QWidget):
         self.cmb_op.setMinimumWidth(200)
         self.cmb_op.currentIndexChanged.connect(self._on_op_change)
         bl.addWidget(self.cmb_op)
+        bl.addSpacing(10)
+        self.lbl_evt = QLabel("活动关")
+        self.lbl_evt.setObjectName("muted")
+        bl.addWidget(self.lbl_evt)
+        self.cmb_evt = QComboBox()
+        for label, val in (("不含活动关", "none"), ("当期开放", "open"),
+                           ("当期 + 近 14 天", "recent"), ("全部活动（含已关）", "all")):
+            self.cmb_evt.addItem(label, val)
+        self.cmb_evt.setCurrentIndex(1)
+        self.cmb_evt.setToolTip("当期开放：只算正在开放的活动关；近 14 天：包含刚结束的；全部：含历史活动（仅供对比）")
+        self.cmb_evt.currentIndexChanged.connect(self._on_evt_change)
+        bl.addWidget(self.cmb_evt)
         bl.addStretch(1)
         self.btn_reload = QPushButton("重新计算")
         self.btn_reload.clicked.connect(self.refresh)
@@ -127,7 +140,8 @@ class PlanPage(QWidget):
                 self.planner = Planner(self.db_path, calc=self.calc)
             self.planner.load()
             self._fill_operators()
-            self.result = self.planner.plan(mode=self.mode, uid=self.uid)
+            self.result = self.planner.plan(mode=self.mode, uid=self.uid,
+                                            include_events=self.evt, include_rerun=True)
         except Exception as e:
             self.lbl_state.setText(f"计算失败：{e}")
             return
@@ -136,8 +150,12 @@ class PlanPage(QWidget):
         keep_row = self.tbl.currentRow()
         self.tbl.setRowCount(len(rows))
         for i, row in enumerate(rows):
+            chosen = row["chosen"] or {}
+            mode_txt = row["mode"]
+            if chosen.get("event"):
+                mode_txt += "（复刻）" if chosen.get("rerun") else "（活动）"
             vals = [row["name"], str(row["need"]), str(row["stock"]), str(row["miss"]),
-                    row["mode"],
+                    mode_txt,
                     (("%.4f" % row["unit"]) if (row["unit"] or 0) < 1 else ("%.2f" % row["unit"]))
                     if row.get("unit") is not None and row["mode"] not in ("已够", "已包含") else "—",
                     str((row["chosen"] or {}).get("runs", "—")),
@@ -151,6 +169,10 @@ class PlanPage(QWidget):
                 self.tbl.setItem(i, c, it)
 
         # 状态
+        try:
+            ev = self.planner.event_summary() if self.planner else {"open": [], "recent": []}
+        except Exception:
+            ev = {"open": [], "recent": []}
         md = r["missing_data"]
         op_name = self._op_label()
         tip = (f"{op_name}：{len(rows)} 种材料 · 缺 {sum(1 for x in rows if x['miss']>0)} 种 · "
@@ -159,6 +181,13 @@ class PlanPage(QWidget):
             tip += "  ⚠ 掉落数据还没同步（去「掉落查询」页点刷新）"
         if md:
             tip += f"  ⚠ 无获取途径：{'、'.join(md[:5])}"
+        if self.evt == "open":
+            if ev["open"]:
+                tip += "  ● 活动中：" + "、".join(f"{x['name']}（{x['close']} 结束）" for x in ev["open"][:2])
+            elif ev["recent"]:
+                tip += f"  ● 当前无开放活动（最近：{ev['recent'][0]['name']} {ev['recent'][0]['close']} 结束）"
+        elif self.evt == "recent" and ev["recent"]:
+            tip += "  ● 含近期活动：" + "、".join(x["name"] for x in ev["recent"][:2])
         self.lbl_state.setText(tip)
 
         # 总计
@@ -193,6 +222,10 @@ class PlanPage(QWidget):
         i = self.cmb_op.currentIndex() if hasattr(self, "cmb_op") else 0
         return self.cmb_op.itemText(i) if i >= 0 else "全部"
 
+    def _on_evt_change(self, idx):
+        self.evt = self.cmb_evt.itemData(idx) or "open"
+        self.refresh()
+
     def _on_op_change(self, idx):
         self.uid = self.cmb_op.itemData(idx)
         self.refresh()
@@ -204,8 +237,11 @@ class PlanPage(QWidget):
         lines = ["刷图清单（按理智排序）", ""]
         for s in stages:
             names = "、".join(s["items"][:4])
+            tag = ""
+            if s.get("event"):
+                tag = ("  【复刻·" if s.get("rerun") else "  【活动·") + (s.get("until") or "?") + " 结束】"
             lines.append(f"  {s['stage']:<10} {s['ap']:>3} 理智/次   ×{s['runs']:<7.1f} "
-                         f"= {s['ap_total']:>8.0f} 理智   {names}")
+                         f"= {s['ap_total']:>8.0f} 理智   {names}{tag}")
         lines.append("")
         lines.append("提示：选中上方某一行，可查看该材料的全部候选方案（直刷各关 / 合成 / 凭证 / 礼包）")
         self.txt_opts.setPlainText("\n".join(lines))
@@ -220,8 +256,11 @@ class PlanPage(QWidget):
         for k, o in enumerate(row["options"], 1):
             head = f"[{k}] {o['type']:<6} "
             if o["type"] == "direct":
+                tag = ""
+                if o.get("event"):
+                    tag = ("  [复刻]" if o.get("rerun") else "  [活动]") + (f" {o['until']} 结束" if o.get("until") else "")
                 lines.append(head + f"{o['stage']:<8} 掉率 {o['rate']:.3f}/次 · {o['ap']} 理智/次 · "
-                                    f"{o['ap_item']} 理智/个 · 需 {o['runs']:.0f} 次 · 样本 {o['times']:,}")
+                                    f"{o['ap_item']} 理智/个 · 需 {o['runs']:.0f} 次 · 样本 {o['times']:,}{tag}")
             elif o["type"] == "synth":
                 lines.append(head + f"合成 {o['ap_item']} 理智/个 · 共 {o['sanity']:,} 理智")
                 for p in o.get("parts") or []:
