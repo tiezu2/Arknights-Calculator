@@ -1,13 +1,13 @@
 @echo off
 chcp 65001 >nul
-title 明日方舟练度计算器 V01.0
+title 明日方舟练度计算器 V1.1.0
 cd /d "%~dp0"
-if exist "明日方舟练度计算器V01.0.exe" (
-  start "" "明日方舟练度计算器V01.0.exe"
+if exist "明日方舟练度计算器V1.1.0.exe" (
+  start "" "明日方舟练度计算器V1.1.0.exe"
   exit /b
 )
-if exist "明日方舟培养终端.exe" (
-  start "" "明日方舟培养终端.exe"
+if exist "明日方舟练度计算器V01.0.exe" (
+  start "" "明日方舟练度计算器V01.0.exe"
   exit /b
 )
 where pythonw >nul 2>nul

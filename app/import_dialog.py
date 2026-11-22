@@ -297,6 +297,7 @@ class ImportDialog(QDialog):
         self.setWindowTitle("导入数据 · MAA / JSON / CSV")
         self.resize(760, 620)
         self.setStyleSheet(QSS_DLG)
+        self.db_path = db_path
         self.imp = Importer(db_path)
         self.applied = False
 
@@ -312,6 +313,30 @@ class ImportDialog(QDialog):
         self.p_smart = _SmartPage(db_path)
         self.p_inv = _Page("inv", self.imp)
         self.p_op = _Page("op", self.imp)
+        # ---- 森空岛页：登录 + 练度同步 ----
+        page_sk = QWidget()
+        sk_lay = QVBoxLayout(page_sk)
+        sk_lay.setContentsMargins(12, 12, 12, 12)
+        sk_lay.setSpacing(10)
+
+        sk_tip = QLabel("森空岛（Skland）扫码登录后，可一键同步账号内干员的练度\n"
+                        "（等级 / 精英阶段 / 技能等级 / 专精 / 模组），同步后自动预填「现等级」。")
+        sk_tip.setObjectName("hint")
+        sk_tip.setWordWrap(True)
+        sk_lay.addWidget(sk_tip)
+
+        self.btn_skland = QPushButton("打开森空岛登录 / 同步")
+        self.btn_skland.setObjectName("primary")
+        self.btn_skland.clicked.connect(self.open_skland)
+        sk_lay.addWidget(self.btn_skland, 0, Qt.AlignLeft)
+
+        self.lbl_skland = QLabel("")
+        self.lbl_skland.setObjectName("hint")
+        self.lbl_skland.setWordWrap(True)
+        sk_lay.addWidget(self.lbl_skland)
+        sk_lay.addStretch(1)
+
+        self.tabs.addTab(page_sk, "森空岛")
         self.tabs.addTab(self.p_smart, "智能导入（全部）")
         self.tabs.addTab(self.p_inv, "库存")
         self.tabs.addTab(self.p_op, "干员列表")
@@ -327,6 +352,19 @@ class ImportDialog(QDialog):
         br.addStretch(1)
         br.addWidget(b_close)
         lay.addLayout(br)
+
+    def open_skland(self):
+        try:
+            from skland_dialog import SklandDialog
+        except Exception as e:
+            self.lbl_skland.setText(f"森空岛模块不可用：{e}")
+            return
+        try:
+            dlg = SklandDialog(self.db_path, self)
+            dlg.exec()
+            self.lbl_skland.setText("同步已结束。关闭本窗口后主界面会刷新干员与练度。")
+        except Exception as e:
+            self.lbl_skland.setText(f"森空岛出错：{e}")
 
     def clear_owned(self):
         self.imp.clear_owned()

@@ -6,8 +6,9 @@
 """
 import os
 import sys
+import threading
 
-from PySide6.QtCore import Qt, QRectF, QSize, Signal
+from PySide6.QtCore import QObject, QTimer, Qt, QRectF, QSize, Signal
 from PySide6.QtGui import (QColor, QFont, QFontDatabase, QIcon, QLinearGradient, QPainter,
                            QPainterPath, QPen, QPolygonF, QPixmap)
 from PySide6.QtWidgets import (QAbstractItemView, QApplication, QComboBox, QFrame, QGridLayout,
@@ -19,6 +20,17 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from calc import Calc, ATTR_CN  # noqa: E402
 from import_dialog import ImportDialog  # noqa: E402
 from skland_dialog import SklandDialog  # noqa: E402
+from drop_dialog import DropDialog  # noqa: E402
+from drop_page import DropPage
+from plan_page import PlanPage  # noqa: E402
+import penguin  # noqa: E402
+
+APP_VERSION = "V1.1.0"
+
+class _DropBridge(QObject):
+    """后台掉落同步完成后回主线程刷新 UI"""
+    done = Signal(str)
+
 
 PROF_CHAR = {"CASTER": "术", "SNIPER": "狙", "WARRIOR": "近", "TANK": "重",
              "MEDIC": "医", "SUPPORT": "辅", "SPECIALIST": "特", "SPECIAL": "特", "PIONEER": "先"}
@@ -252,13 +264,30 @@ class Panel(QFrame):
 
 
 class Card(QFrame):
-    """材料合计卡片"""
-    def __init__(self, item, parent=None):
+    """材料合计卡片（可点击 → 跳到掉落查询）"""
+
+    def __init__(self, item, parent=None, on_click=None):
         super().__init__(parent)
         self.item = item
+        self.on_click = on_click
+        self.hover = False
         self.setFixedHeight(64)
         self.setMinimumWidth(168)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setToolTip("点击查看该材料掉落率")
+
+    def enterEvent(self, e):
+        self.hover = True
+        self.update()
+
+    def leaveEvent(self, e):
+        self.hover = False
+        self.update()
+
+    def mousePressEvent(self, e):
+        if self.on_click and self.item.get("id"):
+            self.on_click(self.item["id"])
 
     def paintEvent(self, e):
         p = QPainter(self)
@@ -273,8 +302,8 @@ class Card(QFrame):
         path.lineTo(w - c, h)
         path.lineTo(0, h)
         path.closeSubpath()
-        p.fillPath(path, QColor(11, 19, 25))
-        p.setPen(QPen(QColor(LINE), 1))
+        p.fillPath(path, QColor(15, 26, 33) if getattr(self, "hover", False) else QColor(11, 19, 25))
+        p.setPen(QPen(QColor(CYAN if getattr(self, "hover", False) else LINE), 1))
         p.drawPath(path)
         p.setPen(Qt.NoPen)
         p.setBrush(QColor(tier))
@@ -391,7 +420,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.calc = Calc(DB)
-        self.setWindowTitle("RHODES ISLAND · 干员培养终端")
+        self.setWindowTitle(f"RHODES ISLAND · 干员培养终端 {APP_VERSION}")
         self.resize(1500, 900)
         self.setMinimumSize(1180, 720)
         self.setStyleSheet(QSS)
@@ -411,14 +440,20 @@ class MainWindow(QMainWindow):
         self.stack = QStackedWidget()
         self.page_plan = self._build_plan_page()
         self.page_inv = self._build_inventory_page()
+        self.page_drop = DropPage(DB, ICON_DIR, self)
+        self.page_farm = PlanPage(DB, self.calc, ICON_DIR, self)
         self.stack.addWidget(self.page_plan)
         self.stack.addWidget(self.page_inv)
+        self.stack.addWidget(self.page_drop)
+        self.stack.addWidget(self.page_farm)
         body.addWidget(self.stack, 1)
         outer.addLayout(body, 1)
 
         self._style_tabs(0)
         self.refresh_all()
         self.do_search("")
+        QTimer.singleShot(1200, self._auto_drop_check)
+        QTimer.singleShot(1600, self.page_drop.reload)
 
     # ---------- 顶栏 ----------
     def _build_header(self):
@@ -434,20 +469,27 @@ class MainWindow(QMainWindow):
         box = QVBoxLayout()
         box.setSpacing(1)
         b1 = QLabel("RHODES ISLAND"); b1.setObjectName("brand")
-        b2 = QLabel("干员培养终端 · TRAINING TERMINAL"); b2.setObjectName("brandSub")
+        b2 = QLabel(f"干员培养终端 · {APP_VERSION} · TRAINING TERMINAL"); b2.setObjectName("brandSub")
         box.addWidget(b1); box.addWidget(b2)
         lay.addLayout(box)
         lay.addSpacing(24)
 
         self.btn_tab_plan = QPushButton("培养计划"); self.btn_tab_plan.setCheckable(True); self.btn_tab_plan.setChecked(True)
         self.btn_tab_inv = QPushButton("库存"); self.btn_tab_inv.setCheckable(True)
+        self.btn_tab_drop = QPushButton("掉落查询"); self.btn_tab_drop.setCheckable(True)
+        self.btn_tab_farm = QPushButton("刷图计划"); self.btn_tab_farm.setCheckable(True)
+        self.btn_tab_farm.setToolTip("按当前培养表缺料，给出刷图清单与总理智")
         self.btn_tab_plan.clicked.connect(lambda: self.switch_tab(0))
         self.btn_tab_inv.clicked.connect(lambda: self.switch_tab(1))
+        self.btn_tab_drop.clicked.connect(lambda: self.switch_tab(2))
+        self.btn_tab_farm.clicked.connect(lambda: self.switch_tab(3))
         lay.addWidget(self.btn_tab_plan)
         lay.addWidget(self.btn_tab_inv)
+        lay.addWidget(self.btn_tab_drop)
+        lay.addWidget(self.btn_tab_farm)
         self.btn_import = QPushButton("导入")
         self.btn_import.clicked.connect(self.open_import)
-        self.btn_import.setToolTip("导入 MAA 导出的库存 / 干员列表（JSON·CSV·TXT 或粘贴）")
+        self.btn_import.setToolTip("导入 MAA / 森空岛 / penguin 数据（JSON·CSV·TXT 或粘贴）")
         lay.addWidget(self.btn_import)
 
         self.btn_skland = QPushButton("森空岛")
@@ -455,7 +497,12 @@ class MainWindow(QMainWindow):
         self.btn_skland.setToolTip("登录森空岛，一键同步账号内干员练度")
         lay.addWidget(self.btn_skland)
 
+
+
+
         lay.addStretch(1)
+        self.lbl_drop = QLabel("掉落数据: 读取中…"); self.lbl_drop.setObjectName("muted")
+        lay.addWidget(self.lbl_drop)
         self.lbl_status = QLabel("数据已载入"); self.lbl_status.setObjectName("muted")
         lay.addWidget(self.lbl_status)
         dot = QLabel("◆"); dot.setStyleSheet(f"color:{CYAN}; font-size: 12px;")
@@ -469,12 +516,20 @@ class MainWindow(QMainWindow):
                " letter-spacing:1px; padding:8px 20px;" % (LINE, MUTED))
         self.btn_tab_plan.setStyleSheet(on if i == 0 else off)
         self.btn_tab_inv.setStyleSheet(on if i == 1 else off)
+        if hasattr(self, "btn_tab_drop"):
+            self.btn_tab_drop.setStyleSheet(on if i == 2 else off)
+        if hasattr(self, "btn_tab_farm"):
+            self.btn_tab_farm.setStyleSheet(on if i == 3 else off)
 
     def switch_tab(self, i):
         self.stack.setCurrentIndex(i)
         self._style_tabs(i)
         if i == 1:
             self.refresh_inventory()
+        elif i == 2:
+            self.page_drop.reload()
+        elif i == 3:
+            self.page_farm.refresh()
         else:
             # 回到培养页：恢复完整干员列表（清掉「我的」筛选）
             if getattr(self, "only_owned", False):
@@ -817,15 +872,67 @@ class MainWindow(QMainWindow):
         self.refresh_inventory()
         self.do_search(self.search.text())
 
+    # ---------- 森空岛 ----------
     def open_skland(self):
         dlg = SklandDialog(DB, self)
         dlg.exec()
+        self.refresh_all()
+        self.do_search(self.search.text())
         if getattr(dlg, "synced", 0):
-            self.refresh_all()
-            self.do_search(self.search.text())
             self.lbl_hint.setText(f"已从森空岛同步 {dlg.synced} 名干员练度（现等级/技能/模组已预填）")
+
+    # ---------- 掉落数据 ----------
+    def open_drop(self):
+        dlg = DropDialog(self)
+        dlg.exec()
+        self._refresh_drop_label()
+
+    def _refresh_drop_label(self):
+        try:
+            m = penguin.summary()
+        except Exception:
+            m = None
+        if not m:
+            self.lbl_drop.setText("掉落数据: 无缓存")
         else:
-            self.do_search(self.search.text())
+            c = m.get("counts") or {}
+            self.lbl_drop.setText(
+                f"掉落数据: {c.get('matrix', 0)} 行 · {(m.get('fetched_at_text') or '')[:10]}")
+
+    def _auto_drop_check(self):
+        """启动时后台检查版本指纹，不阻塞界面"""
+        self._refresh_drop_label()
+        try:
+            st = penguin.load_settings()
+        except Exception:
+            return
+        if not st.get("auto_drop_sync", True):
+            return
+        self.lbl_drop.setText("掉落数据: 检查版本…")
+        bridge = _DropBridge(self)
+        bridge.done.connect(self._on_drop_done)
+        self._drop_bridge = bridge
+
+        def work():
+            try:
+                res = penguin.run_sync(force=False, log=lambda m: None)
+                if res.get("changed"):
+                    cnt = (res.get("counts") or {}).get("matrix", 0)
+                    msg = f"掉落数据: 已更新 · {cnt} 行"
+                else:
+                    msg = "掉落数据: 已是最新"
+            except Exception as e:
+                msg = f"掉落数据: 更新失败({type(e).__name__})"
+            try:
+                bridge.done.emit(msg)
+            except Exception:
+                pass
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _on_drop_done(self, msg):
+        self.lbl_drop.setText(msg)
+        self._refresh_drop_label()
 
     def toggle_owned_filter(self):
         self.only_owned = not getattr(self, "only_owned", False)
@@ -1107,6 +1214,8 @@ class MainWindow(QMainWindow):
         self._tb = tb
         self._rebuild_plan_tabs(tb)
         self._render_totals()
+        if hasattr(self, "page_farm") and self.stack.currentIndex() == 3:
+            self.page_farm.refresh()
 
     def _rebuild_plan_tabs(self, tb):
         keep = ""
@@ -1184,7 +1293,13 @@ class MainWindow(QMainWindow):
             return
         cols = 6
         for i, it in enumerate(items):
-            self.tot_layout.addWidget(Card(it), i // cols, i % cols)
+            self.tot_layout.addWidget(Card(it, on_click=self.goto_drop), i // cols, i % cols)
+
+    def goto_drop(self, material_id):
+        """跳到掉落查询页并选中该材料"""
+        self.switch_tab(2)
+        if hasattr(self, "page_drop"):
+            self.page_drop.select_material(material_id)
 
     # ---------- 库存 ----------
     def refresh_inventory(self):
