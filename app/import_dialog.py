@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (QDialog, QFileDialog, QHBoxLayout, QLabel, QLineE
                                QVBoxLayout, QWidget)
 
 from importer import Importer
+from smart_import import SmartImporter
 
 QSS_DLG = """
 QDialog { background: #070a0d; }
@@ -163,6 +164,133 @@ class _Page(QWidget):
             self.lbl_state.setText(f"已导入 {n} 名干员到「我的干员」")
 
 
+
+
+class _SmartPage(QWidget):
+    """一条粘贴/一个文件 → 自动识别全部来源，库存与练度一起导入"""
+
+    def __init__(self, db_path, parent=None):
+        super().__init__(parent)
+        self.imp = SmartImporter(db_path)
+        self.parsed = None
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(12, 12, 12, 12)
+        lay.setSpacing(8)
+        tip = QLabel(
+            "支持一次导入全部：\n"
+            "· penguin-statistics 仓库 JSON（@type/@penguin-statistics/depot）\n"
+            "· MAA 干员识别 JSON / CSV / Markdown 表格\n"
+            "· 森空岛 player/info JSON（含技能专精、模组）\n"
+            "· 普通文本：材料名,数量 / char_xxx / 干员名\n"
+            "自动识别来源，库存和练度会一起写入。")
+        tip.setObjectName("hint")
+        tip.setWordWrap(True)
+        lay.addWidget(tip)
+
+        fr = QHBoxLayout()
+        fr.setSpacing(6)
+        self.ed_path = QLineEdit()
+        self.ed_path.setPlaceholderText("选择文件（留空则用下面的粘贴内容）")
+        b_br = QPushButton("浏览…")
+        b_br.clicked.connect(self.browse)
+        fr.addWidget(self.ed_path, 1)
+        fr.addWidget(b_br)
+        lay.addLayout(fr)
+
+        self.ed_text = QPlainTextEdit()
+        self.ed_text.setPlaceholderText("把 MAA / 森空岛 / penguin 导出的内容直接粘进来…")
+        self.ed_text.setMinimumHeight(170)
+        lay.addWidget(self.ed_text, 1)
+
+        br = QHBoxLayout()
+        b_clip = QPushButton("从剪贴板粘贴")
+        b_clip.clicked.connect(self.paste_clipboard)
+        b_parse = QPushButton("解析预览")
+        b_parse.clicked.connect(self.do_parse)
+        b_apply = QPushButton("应用导入")
+        b_apply.setObjectName("primary")
+        b_apply.clicked.connect(self.do_apply)
+        self.lbl_state = QLabel("")
+        self.lbl_state.setObjectName("hint")
+        br.addWidget(b_clip)
+        br.addWidget(b_parse)
+        br.addWidget(b_apply)
+        br.addWidget(self.lbl_state, 1)
+        lay.addLayout(br)
+
+        self.txt_preview = QTextEdit()
+        self.txt_preview.setReadOnly(True)
+        self.txt_preview.setMinimumHeight(130)
+        lay.addWidget(self.txt_preview, 1)
+
+    def browse(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "选择导入文件", os.path.expanduser("~"),
+            "数据文件 (*.json *.csv *.txt *.md);;所有文件 (*)")
+        if path:
+            self.ed_path.setText(path)
+
+    def paste_clipboard(self):
+        txt = QApplication.clipboard().text()
+        if txt.strip():
+            self.ed_text.setPlainText(txt)
+            self.ed_path.clear()
+            self.lbl_state.setText("已从剪贴板读取 %d 字符" % len(txt))
+        else:
+            self.lbl_state.setText("剪贴板是空的")
+
+    def _content(self):
+        text = self.ed_text.toPlainText().strip()
+        if text:
+            return text
+        p = self.ed_path.text().strip()
+        if p and os.path.exists(p):
+            for enc in ("utf-8-sig", "utf-8", "gbk", "utf-16"):
+                try:
+                    return open(p, encoding=enc).read()
+                except Exception:
+                    continue
+        return ""
+
+    def do_parse(self):
+        content = self._content()
+        if not content.strip():
+            self.lbl_state.setText("没有内容：请选择文件或粘贴数据")
+            return
+        self.parsed = self.imp.parse(content)
+        inv = self.parsed["inventory"]
+        ops = self.parsed["levels"] or self.parsed["operators"]
+        srcs = "、".join(self.parsed["sources"]) or "文本/表格"
+        self.lbl_state.setText(
+            f"来源：{srcs}｜库存 {len(inv)} 种｜练度 {len(ops)} 名")
+        lines = [f"识别来源：{srcs}", ""]
+        if inv:
+            lines.append(f"库存 {len(inv)} 种（前 15）：")
+            for mid, q in sorted(inv.items(), key=lambda kv: -kv[1])[:15]:
+                lines.append(f"  {self.imp.base.mat_name(mid)} × {q:,}")
+        if self.parsed["levels"]:
+            lines.append("")
+            lines.append(f"练度 {len(self.parsed['levels'])} 名（前 10）：")
+            for uid, lv in list(self.parsed["levels"].items())[:10]:
+                nm = self.imp.base.mat_name(uid) if False else uid
+                spec = sum(sk.get("spec", 0) for sk in lv.get("skills") or [])
+                lines.append(f"  {uid}  精英{lv['elite']} Lv{lv['level']} 专精合计{spec}")
+        if self.parsed["unknown_mat"]:
+            lines.append("\n未识别材料：" + "、".join(self.parsed["unknown_mat"][:15]))
+        if self.parsed["unknown_op"]:
+            lines.append("未识别干员：" + "、".join(self.parsed["unknown_op"][:15]))
+        self.txt_preview.setPlainText("\n".join(lines))
+
+    def do_apply(self):
+        if not self.parsed:
+            self.do_parse()
+        if not self.parsed:
+            return
+        res = self.imp.apply(self.parsed)
+        self.lbl_state.setText(f"已导入：库存 {res['inventory']} 种，干员 {res['operators']} 名")
+
+
 class ImportDialog(QDialog):
     def __init__(self, db_path, parent=None):
         super().__init__(parent)
@@ -181,8 +309,10 @@ class ImportDialog(QDialog):
         lay.addWidget(title)
 
         self.tabs = QTabWidget()
+        self.p_smart = _SmartPage(db_path)
         self.p_inv = _Page("inv", self.imp)
         self.p_op = _Page("op", self.imp)
+        self.tabs.addTab(self.p_smart, "智能导入（全部）")
         self.tabs.addTab(self.p_inv, "库存")
         self.tabs.addTab(self.p_op, "干员列表")
         lay.addWidget(self.tabs, 1)

@@ -562,7 +562,8 @@ class MainWindow(QMainWindow):
             "QTreeWidget{background:#0a1116;border:1px solid #223140;outline:none;}"
             "QTreeWidget::item{padding:4px 6px;border-bottom:1px solid #101b24;}"
             "QTreeWidget::item:hover{background:#0d1a22;}"
-            "QTreeWidget::item:selected{background:#0e2130;color:#eaf6fb;}")
+            "QTreeWidget::item:selected{background:#0e2130;color:#eaf6fb;}"
+            "QTreeWidget::branch{background:transparent;border-image:none;image:none;}")
         lw = QWidget(); ll = QVBoxLayout(lw); ll.setContentsMargins(10, 0, 10, 8); ll.addWidget(self.oplist)
         lv.addWidget(lw, 1)
 
@@ -624,6 +625,7 @@ class MainWindow(QMainWindow):
             "QTabBar::tab:hover{color:#d7e3ec;}")
         self.plan_tabs.currentChanged.connect(lambda _i: self._render_totals())
         self._tab_rows = {}
+        self.collapsed_profs = set()
         rv.addWidget(self.plan_tabs, 1)
 
         rv.addWidget(self._head("材料合计 / 缺少"))
@@ -737,24 +739,28 @@ class MainWindow(QMainWindow):
             if not items:
                 continue
             items.sort(key=lambda x: (-x[2], x[1]))
-            top = QTreeWidgetItem([f"◆ {cn}   {len(items)}"])
-            top.setFlags(Qt.ItemIsEnabled)
+            collapsed = code in getattr(self, "collapsed_profs", set())
+            top = QTreeWidgetItem([self._header_text(cn, len(items), not collapsed)])
+            top.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
             top.setForeground(0, QColor(CYAN))
-            f = QFont("Microsoft YaHei UI", 9); f.setBold(True); top.setFont(0, f)
+            f = QFont("Microsoft YaHei UI", 9)
+            f.setBold(True)
+            top.setFont(0, f)
             top.setBackground(0, QColor(12, 195, 231, 26))
-            self.oplist.addTopLevelItem(top)
+            top.setData(0, Qt.UserRole + 1, {"code": code, "cn": cn, "count": len(items)})
             for uid, name, rarity, prof in items:
                 stars = "★" * (rarity + 1)
-                mark = " ●" if uid in owned_set else ""
-                it = QTreeWidgetItem([f"   {name}{mark}    {stars}"])
+                mark = " \u25cf" if uid in owned_set else ""
+                it = QTreeWidgetItem([f"{name}{mark}    {stars}"])
+                it.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
                 it.setData(0, Qt.UserRole, {"uid": uid, "name": name, "rarity": rarity + 1, "prof": prof})
                 it.setForeground(0, QColor(RARITY.get(rarity + 1, TEXT)))
                 av = op_pix(uid, 28)
                 it.setIcon(0, QIcon(av if not av.isNull() else prof_badge(prof, rarity + 1, 24)))
-                self.oplist.addTopLevelItem(it)
+                top.addChild(it)
                 shown += 1
-
-        self.oplist.expandAll()
+            self.oplist.addTopLevelItem(top)
+            top.setExpanded(not collapsed)
         # 统计
         rar_cnt = {}
         for _, _, r, _p, _x in rows:
@@ -768,6 +774,11 @@ class MainWindow(QMainWindow):
             tip += f" · 筛选后 {shown} 名"
         tip += "   |   " + " / ".join(parts) if parts else ""
         self.lbl_count.setText(tip)
+
+    @staticmethod
+    def _header_text(cn, count, expanded):
+        arrow = "\uff0d" if expanded else "\uff0b"   # － / ＋（三角字形在雅黑里会显示成方框）
+        return f"{arrow} {cn}   {count}"
 
     def _search_db(self, kw):
         import sqlite3
@@ -889,6 +900,10 @@ class MainWindow(QMainWindow):
     def on_pick(self, item, _col=0):
         d = item.data(0, Qt.UserRole) if hasattr(item, "data") else None
         if not d:
+            # 点的是职业组标题 → 折叠/展开
+            info = item.data(0, Qt.UserRole + 1) if hasattr(item, "data") else None
+            if info:
+                self.toggle_prof_group(item, info)
             return
         op = self.calc.operator(d["uid"])
         if not op:
@@ -932,6 +947,17 @@ class MainWindow(QMainWindow):
         rec = {"a": a, "chk": chk, "from": sp1, "to": sp2}
         chk.toggled.connect(lambda _=False: self._update_tab_labels())
         return rec
+
+    def toggle_prof_group(self, item, info):
+        code = info.get("code")
+        expanded = not item.isExpanded()
+        item.setExpanded(expanded)
+        if expanded:
+            getattr(self, "collapsed_profs", set()).discard(code)
+        else:
+            getattr(self, "collapsed_profs", set()).add(code)
+        item.setText(0, self._header_text(info.get("cn") or "", info.get("count") or 0, expanded))
+        self.oplist.setCurrentItem(item)
 
     def _rebuild_targets(self):
         """把目标项按 等级·阶段 / 技能 / 模组 三页排布"""

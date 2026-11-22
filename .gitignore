@@ -22,3 +22,6 @@ dist/
 # 发布临时文件
 _release*
 docs/*.xlsx
+# 个人账号凭据（绝不提交）
+skland_cred.json
+*_cred.json
