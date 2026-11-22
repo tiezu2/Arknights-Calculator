@@ -1,121 +1,148 @@
-# 明日方舟 · 干员培养终端
+﻿# 明日方舟 · 干员培养终端（桌面版）
 
-一个 **离线可用的明日方舟培养计算器**（Windows 桌面程序，PySide6 原生窗口）。
-计算逻辑从 [cn.ark-nights.com](https://cn.ark-nights.com/table) 的前端 bundle **提取并移植**，数据存 SQLite，
-支持库存/练度导入（penguin-statistics 仓库、MAA 干员识别）。
+**原生 Windows 桌面程序**（PySide6 / Qt 窗口）—— 不依赖浏览器、不开本地服务、不联网。
+算法从 `cn.ark-nights.com`（V2.23.20）前端 bundle **提取并移植**，数据存 SQLite。
 
-![主界面](docs/screenshot-plan.png)
+## 运行
 
-## 功能
-
-| 模块 | 说明 |
+| 方式 | 操作 |
 | --- | --- |
-| 干员检索 | 469 名干员 → 过滤掉预备干员/特殊模式专用后 **440 名可培养**；按**职业分组 + 星级排序**，顶部职业/星级筛选，显示总数与星级分布 |
-| 培养目标 | 每个干员可**同时勾选多项**：精0/1/2等级、精英阶段、技能等级、技能1/2/3专精、模组1/2/3；等级与阶段各自填「现 → 目标」，支持区间累加（如精英 0→2、技能 1→7） |
-| 培养表 | **「全部」+ 每个干员一个标签页**；每行显示升级项目、材料 chip、现→目标，右侧 `×` 删除 |
-| 材料合计 / 缺少 | 跟随当前标签页实时汇总：需 / 存 / 缺 / 可合成（用库存配方算） |
-| 库存 | 98 种材料表格 + 搜索 + 数量编辑，保存写回 SQLite |
-| 导入 | 库存与干员练度（JSON/CSV/TXT/剪贴板），见下 |
+| **推荐** | 双击 `明日方舟培养终端.exe`（打包版，免装 Python） |
+| 开发版 | 双击 `启动.bat`（用 pythonw 拉起，无控制台窗口） |
+| 命令行 | `py -3 app\app_desktop.py` |
 
-## 算法（移植，不是重新推导）
+桌面快捷方式：`明日方舟培养终端`
 
-| 站点模块 | 内容 | 实现 |
+## 界面
+
+- 顶部：六边形 Logo + `RHODES ISLAND` + 培养计划 / 库存 两个 tab + 右侧状态（N 项计划 · M 种材料 · 缺 K 种）
+- 左侧：干员检索（名称/拼音，6★ 优先，星级配色）→ 升级项目下拉（精0/1/2等级、精英阶段、技能等级、3 个专精、3 个模组，按干员上限自动过滤）→ 现/目标 → 加入计算表
+- 右侧：培养表（每行：干员 / 升级项目 / 材料 chip / 现→目标 / × 删除）+ 材料合计·缺少卡片（需 / 存 / 缺 / 可合成）
+- 库存页：材料表格 + 搜索 + 数字框，保存写回 SQLite
+
+风格：深色工业底 + 青色 `#0CC3E7` + 金色 `#F2C14E`，切角面板、菱形标记、扫描线纹理，全部 Qt 自绘（`QPainter`），无图片资源。
+
+## 算法来源（移植，不是重新推导）
+
+| 站点模块 | 内容 | 对应实现 |
 | --- | --- | --- |
-| `2lXy.a` | `levelCost(rarity, phase, cur, target)` | `app/calc.py: level_cost()` |
-| `v1ni` | `maxLevel` / `upgradeCoinRequirement` / `upgradeExpRequirement` | `data/levelTables.json` |
-| `Ovxt` | 龙门币 `G-4-1`、经验值 `EO-4-1`、作战记录 2000/1000/400/200 | `data/ovxt.json` |
-| 干员对象 | `elites[].materials`、`skills[]`、`master_skills[].upgrades[]`、`equipments[][]` | `app/arknights.db` 四张明细表 |
+| `2lXy.a` | `levelCost(rarity, phase, cur, target)` | `calc.py: level_cost()` |
+| `v1ni` | `maxLevel` / `upgradeCoinRequirement` / `upgradeExpRequirement` | 存 `meta` 表 |
+| `Ovxt` | 龙门币 `G-4-1`、经验值 `EO-4-1`、作战记录 2000/1000/400/200 | `ovxt` 常量 |
+| 干员对象 | `elites[].materials`、`skills[]`、`master_skills[].upgrades[]`、`equipments[][]` | 4 张明细表 |
 
 ```
 coin = Σ upgradeCoinRequirement[phase][cur-1 … target-2]
 exp  = Σ upgradeExpRequirement[phase][cur-1 … target-2]
-t    = 200 × ceil(exp / 200)  → 按 2000/1000/400/200 拆作战记录，并把 exp 记为「经验值」
+t    = 200 × ceil(exp / 200)   → 按 2000/1000/400/200 拆作战记录，并把 exp 记为「经验值」
 ```
 
 ### 校验（与站点逐项一致）
 
-| 用例 | 结果 |
+| 用例 | 本程序 |
 | --- | --- |
 | 阿米娅 · 精2等级 1→80 | 龙门币 **447,378** / 经验 **495,000** / 高级作战记录 **247** / 中级 **1** |
 | 阿米娅 · 精英阶段 0→1 | 龙门币 **20,000** / 术师芯片 3 / 装置 4 / 异铁 4 |
-| 能天使 · 精2等级 60→90 | 龙门币 573,387 / 高级作战记录 261 / 经验 523,114 |
-
-## 运行
-
-### 方式一：直接跑源码
-
-```bat
-pip install PySide6 Pillow
-python app\app_desktop.py
-```
-
-### 方式二：打包成单文件 exe
-
-```bat
-pip install pyinstaller
-pyinstaller --noconfirm --onefile --noconsole --name 明日方舟培养终端 ^
-  --add-data "app\arknights.db;." --add-data "app\icons;icons" ^
-  --add-data "data\items_map.json;data" --paths app app\app_desktop.py
-```
-
-产物在 `dist\明日方舟培养终端.exe`（约 55 MB，含全部图标与数据库）。
-
-## 导入
-
-| 页签 | 支持格式 |
-| --- | --- |
-| 库存 | `{"@type":"@penguin-statistics/depot","items":[{"id":"4001","have":664000}]}`、`{"items":{"30012":88}}`、`[{"itemId":"30012","count":88}]`、`名称,数量` |
-| 干员列表 | MAA 练度 `[{"id":"char_003_kalts","name":"凯尔希","elite":2,"level":60,"own":true,"skills":[{"level":10,"specializeLevel":3}],"modules":[1,2]}]`、`char_xxx` 或中文名逐行 |
-
-物品 id → 材料名映射来自官方 `item_table.json`（`data/items_map.json`，1599 条）。
-导入练度后，选中该干员会**自动预填**现等级/精英阶段/技能/专精/模组，已拥有的干员带 `●` 标记，`我的` 按钮可只看自己有的（切页自动恢复全部）。
 
 ## 目录
 
 ```
-app\
-  app_desktop.py    桌面程序（PySide6 自绘 UI）
-  calc.py           计算核心（移植自站点）
-  importer.py       MAA / penguin-statistics 导入解析
-  import_dialog.py  导入对话框
-  build_db.py       data\*.json → arknights.db
-  arknights.db      SQLite（469 干员 / 98 材料 / 3006 专精 / 1533 模组）
-  icons\            材料图 98 张（站点）、干员头像 469 张（PRTS）
-data\
-  operators.json / allMaterials.json / levelTables.json / ovxt.json / availability.json / items_map.json
-tools\              重新抓取数据的说明
-docs\               截图
+明日方舟计算器\
+  启动.bat                    开发版启动器（pythonw，无黑窗）
+  桌面版截图.png              界面截图
+  README.md
+  app\
+    app_desktop.py            桌面程序（PySide6 自绘 UI）
+    calc.py                   计算核心（移植自站点）
+    build_db.py               JSON → SQLite
+    arknights.db              数据库 1.5 MB（469 干员 / 98 材料 / 3006 专精 / 1533 模组）
+    web\ ...                  （旧网页版，保留备查）
+    server.py                 （旧本地服务，桌面版不需要）
+  _src\
+    bundle.js / mods\ / data\ 站点原始代码与抠出的模块、导出的 JSON
 ```
 
-## 仓库结构
+## 数据库
+
+| 表 | 说明 |
+| --- | --- |
+| `operators` | 469 干员（星级/职业/上限/技能名） |
+| `op_elites` `op_skills` `op_master` `op_equip` | 882 / 2,682 / 3,006 / 1,533 条材料 |
+| `materials` | 98 材料（等级、类型、合成配方） |
+| `inventory` | 库存 |
+| `plans` | 培养计划 |
+| `meta` | 等级成本表、货币/经验常量 |
+
+## 备注
+
+- 数据与算法来自该站点公开数据，仅供个人规划使用；明日方舟及相关素材版权归鹰角网络所有。
+- 游戏更新后：重跑 `_src` 抓取 → `python app\build_db.py` 重建库即可；如需重新打包 exe，再跑一次 PyInstaller。
+
+## 图标
+
+| 类型 | 来源 | 数量/体积 |
+| --- | --- | --- |
+| 材料图标 | `cn.ark-nights.com/assets/materials/<id>.png`，缩到 48px | 98 张 / 429 KB，随 exe 打包 |
+| 干员图标 | 站点无立绘 → **Qt 自绘职业徽章**（菱形描边 + 职业汉字，颜色跟随星级） | 8 种职业 × 星级配色，运行时生成 |
+
+显示位置：培养表材料 chip、材料合计卡片、干员检索列表、库存表格首列。
+## 干员范围（只保留可培养）
+
+| 项 | 数量 |
+| --- | --- |
+| 数据库内干员 | 469 |
+| **可培养（正常升级）** | **440** |
+| 已排除 | 29（预备干员 12 个 + 卫戍协议/集成战略等特殊模式专用 17 个） |
+
+排除依据：官方 `character_table.json` 的 `isNotObtainable=true` + 名字含「预备干员」。
+列表只显示可培养干员，顶部标注「已排除预备/特殊 29」。
+
+## 列表分类与头像
+
+- 按 **职业** 分组（先锋/近卫/重装/狙击/术师/医疗/辅助/特种），组标题带数量
+- 组内按 **星级降序** 排列，星级用 ★ 显示
+- 顶部两排筛选：职业（全/先/近/重/狙/术/医/辅/特）、星级（全/6/5/4/3/2/1）
+- **总数统计**：可培养 N 名 + 各星级分布（如 6★141 / 5★203 / 4★62 …）
+- 头像：PRTS（`文件:头像 <干员名>.png`）抓取 469 张，命名差异的用 `(卫戍协议)`/`(医疗)` 等真实页面名补齐；无头像时回退自绘职业徽章
+
+## 导入（MAA / JSON / CSV）
+
+頂栏 **导入** 按钮 → 两个页签：
+
+| 页签 | 支持格式 | 说明 |
+| --- | --- | --- |
+| 库存 | JSON / CSV / TXT / 直接粘贴 | 材料中文名 或 游戏物品 id（30012 等）→ 数量 |
+| 干员列表 | JSON / CSV / TXT / 直接粘贴 | `char_xxx` id 或干员中文名 → 映射到本地 uid |
+
+解析示例（都能识别）：
 
 ```
-app\            桌面程序源码 + SQLite 数据库
-  icons\materials\    98 张材料图标
-  icons\operators\    469 张干员头像（来自 PRTS）
-data\           干员 / 材料 / 等级表 / 物品映射 JSON
-tools\          重新抓取数据的说明
-docs\           界面截图
+固源岩,30
+龙门币,120000
+扭转醇<TAB>10
+{"items": {"30012": 88, "30011": 50}}
+[{"itemId": "30013", "count": 12}]
+{"chars": {"char_002_amiya": {"level": 90}, "银灰": 1}}
 ```
 
-克隆与运行：
+- 物品 id → 名称映射来自官方 `item_table.json`（1599 条）
+- 干员导入后写入 `owned` 表，列表顶部 **我的** 按钮可只显示「我的干员」
+- 导入对话框里可「清空我的干员」
 
-```bat
-git clone https://github.com/tiezu2/Arknights-Calculator.git
-cd Arknights-Calculator
-pip install -r requirements.txt
-python app\app_desktop.py
+
+### 已验证可导入的两种官方导出
+
+1. **penguin-statistics 仓库**
+```json
+{"@type":"@penguin-statistics/depot","items":[{"id":"4001","have":664000,"name":"龙门币"}, ...]}
 ```
+按 `id` 映射（`4001`→龙门币、`30135`→D32钢…），非材料项（至纯源石/合成玉/赤金）自动忽略。
+实测：83 种材料入库。
 
-> 仓库约 11 MB。国内网络访问 GitHub 受限时可配置代理或使用镜像。
-
-## 数据与版权
-
-- 计算逻辑与干员/材料数据提取自 **cn.ark-nights.com**（V2.23.20 前端 bundle）
-- 材料图标来自该站点；干员头像来自 **PRTS 明日方舟 Wiki**
-- 明日方舟及相关美术素材版权归 **鹰角网络（Hypergryph）** 所有
-- 本仓库代码仅用于个人学习与规划，请勿商用；数据版权归原出处
-
-## License
-
-代码部分：MIT（见 [LICENSE](LICENSE)）。第三方数据/图片不适用 MIT，见上方说明。
+2. **MAA 干员练度**
+```json
+[{"id":"char_003_kalts","name":"凯尔希","elite":2,"level":60,"own":true,"potential":1,"rarity":6}, ...]
+```
+`own=false` 自动跳过；`elite/level` 写入 `owned(uid, elite, level)`，
+选中该干员时「现等级 / 精英阶段」**自动预填你的练度**（例：凯尔希 → 精2等级 60→90）。
+已拥有干员在列表里带 `●` 标记，配合「我的」筛选只看自己有的。

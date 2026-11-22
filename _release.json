@@ -1,2 +1,0 @@
-{"tag_name":"v1.0.0","name":"v1.0.0 · 明日方舟干员培养终端","draft":false,"prerelease":false,
- "body":"首个版本。\n\n### 内容\n- PySide6 桌面程序（明日方舟风格自绘 UI）\n- 计算逻辑移植自 cn.ark-nights.com V2.23.20 bundle\n- SQLite：469 干员 / 98 材料 / 3006 专精 / 1533 模组\n- 库存与缺少计算、可合成提示\n- 导入：penguin-statistics 仓库、MAA 干员练度（含技能/模组预填）\n\n### 附件\n- avatars.zip → 解压到 app/icons/operators/（469 张干员头像）\n- 明日方舟培养终端.exe → 免安装单文件（55 MB）"}
