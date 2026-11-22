@@ -5,9 +5,9 @@ import os
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QFont
-from PySide6.QtWidgets import (QAbstractItemView, QHBoxLayout, QHeaderView, QLabel,
-                               QPushButton, QTableWidget, QTableWidgetItem, QTextEdit,
-                               QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QHBoxLayout, QHeaderView,
+                               QLabel, QPushButton, QTableWidget, QTableWidgetItem,
+                               QTextEdit, QVBoxLayout, QWidget)
 
 from planner import Planner, MODE_NORMAL, MODE_FAST, MODE_BUY
 
@@ -28,6 +28,7 @@ class PlanPage(QWidget):
         self.db_path = db_path
         self.calc = calc
         self.mode = MODE_NORMAL
+        self.uid = None
         self.result = None
         self.planner = None
 
@@ -49,6 +50,14 @@ class PlanPage(QWidget):
             b.clicked.connect(lambda _=False, mm=m: self.set_mode(mm))
             bl.addWidget(b)
             self.mode_btns[m] = b
+        bl.addSpacing(10)
+        self.lbl_op = QLabel("养成目标")
+        self.lbl_op.setObjectName("muted")
+        bl.addWidget(self.lbl_op)
+        self.cmb_op = QComboBox()
+        self.cmb_op.setMinimumWidth(200)
+        self.cmb_op.currentIndexChanged.connect(self._on_op_change)
+        bl.addWidget(self.cmb_op)
         bl.addStretch(1)
         self.btn_reload = QPushButton("重新计算")
         self.btn_reload.clicked.connect(self.refresh)
@@ -117,7 +126,8 @@ class PlanPage(QWidget):
             if self.planner is None:
                 self.planner = Planner(self.db_path, calc=self.calc)
             self.planner.load()
-            self.result = self.planner.plan(mode=self.mode)
+            self._fill_operators()
+            self.result = self.planner.plan(mode=self.mode, uid=self.uid)
         except Exception as e:
             self.lbl_state.setText(f"计算失败：{e}")
             return
@@ -142,7 +152,8 @@ class PlanPage(QWidget):
 
         # 状态
         md = r["missing_data"]
-        tip = (f"基于当前培养表：{len(rows)} 种材料 · 缺 {sum(1 for x in rows if x['miss']>0)} 种 · "
+        op_name = self._op_label()
+        tip = (f"{op_name}：{len(rows)} 种材料 · 缺 {sum(1 for x in rows if x['miss']>0)} 种 · "
                f"模式「{MODE_LABEL[self.mode]}」")
         if not r["has_drop_data"]:
             tip += "  ⚠ 掉落数据还没同步（去「掉落查询」页点刷新）"
@@ -160,6 +171,31 @@ class PlanPage(QWidget):
         else:
             self.txt_opts.setPlainText("选中上方材料可查看候选方案")
             self._summary_stages()
+
+    def _fill_operators(self):
+        ops = self.planner.operators() if self.planner else []
+        want = self.uid
+        self.cmb_op.blockSignals(True)
+        self.cmb_op.clear()
+        self.cmb_op.addItem("全部（所有干员合计）", None)
+        for o in ops:
+            self.cmb_op.addItem(f"{o['name']}（{o['count']} 项）", o["uid"])
+        idx = 0
+        for i in range(self.cmb_op.count()):
+            if self.cmb_op.itemData(i) == want:
+                idx = i
+                break
+        self.cmb_op.setCurrentIndex(idx)
+        self.uid = self.cmb_op.itemData(idx)
+        self.cmb_op.blockSignals(False)
+
+    def _op_label(self):
+        i = self.cmb_op.currentIndex() if hasattr(self, "cmb_op") else 0
+        return self.cmb_op.itemText(i) if i >= 0 else "全部"
+
+    def _on_op_change(self, idx):
+        self.uid = self.cmb_op.itemData(idx)
+        self.refresh()
 
     def _summary_stages(self):
         stages = self.result["stages"] if self.result else []
@@ -204,7 +240,7 @@ class PlanPage(QWidget):
     def copy_plan(self):
         if not self.result:
             return
-        lines = [f"刷图计划（{MODE_LABEL[self.mode]}）"]
+        lines = [f"刷图计划 · {self._op_label()} · {MODE_LABEL[self.mode]}"]
         for row in self.result["rows"]:
             if row["miss"] <= 0:
                 continue

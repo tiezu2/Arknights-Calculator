@@ -218,12 +218,29 @@ class Planner:
         return total
 
     # ---------------- 需求 ----------------
-    def needs(self):
+    def needs(self, uid=None):
+        """uid=None：全部计划；否则只算该干员的材料需求"""
         if self.calc is None:
             return []
         tb = self.calc.table()
+        if uid:
+            rows = [r for r in tb["rows"] if r["uid"] == uid]
+            items = self.calc.summarize(rows)
+        else:
+            items = tb["items"]
         return [{"id": it["id"], "name": it["name"], "tier": it.get("tier"),
-                 "need": it["need"], "stock": it["stock"], "miss": it["miss"]} for it in tb["items"]]
+                 "need": it["need"], "stock": it["stock"], "miss": it["miss"]} for it in items]
+
+    def operators(self):
+        """当前计划里的干员：[{uid,name,count}]，按名字排序"""
+        if self.calc is None:
+            return []
+        tb = self.calc.table()
+        agg = {}
+        for r in tb["rows"]:
+            rec = agg.setdefault(r["uid"], {"uid": r["uid"], "name": r["operator_name"], "count": 0})
+            rec["count"] += 1
+        return sorted(agg.values(), key=lambda x: x["name"])
 
     # ---------------- 候选方案 ----------------
     def options_for(self, name, mid, miss, topn=3):
@@ -314,8 +331,8 @@ class Planner:
         return min(opts, key=lambda o: (o["sanity"], o["runs"]))
 
     # ---------------- 规划 ----------------
-    def plan(self, needs=None, mode=MODE_NORMAL):
-        needs = self.needs() if needs is None else needs
+    def plan(self, needs=None, mode=MODE_NORMAL, uid=None):
+        needs = self.needs(uid) if needs is None else needs
         rows = []
         for n in needs:
             name, mid, miss = n["name"], n["id"], max(0, n["miss"])
@@ -357,7 +374,7 @@ class Planner:
         farm_total = sum(s["ap_total"] for s in stage_list)
         total = synth_total + farm_total
         return {
-            "mode": mode, "rows": rows, "stages": stage_list,
+            "mode": mode, "uid": uid, "rows": rows, "stages": stage_list,
             "synth_total": synth_total, "farm_total": farm_total,
             "total": total, "days": total / 240.0 if total else 0.0,
             "runs_total": sum(s["runs"] for s in stage_list),
