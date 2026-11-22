@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QApplication, QComboBox, QFram
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from calc import Calc, ATTR_CN  # noqa: E402
 from import_dialog import ImportDialog  # noqa: E402
+from skland_dialog import SklandDialog  # noqa: E402
 
 PROF_CHAR = {"CASTER": "术", "SNIPER": "狙", "WARRIOR": "近", "TANK": "重",
              "MEDIC": "医", "SUPPORT": "辅", "SPECIALIST": "特", "SPECIAL": "特", "PIONEER": "先"}
@@ -449,6 +450,11 @@ class MainWindow(QMainWindow):
         self.btn_import.setToolTip("导入 MAA 导出的库存 / 干员列表（JSON·CSV·TXT 或粘贴）")
         lay.addWidget(self.btn_import)
 
+        self.btn_skland = QPushButton("森空岛")
+        self.btn_skland.clicked.connect(self.open_skland)
+        self.btn_skland.setToolTip("登录森空岛，一键同步账号内干员练度")
+        lay.addWidget(self.btn_skland)
+
         lay.addStretch(1)
         self.lbl_status = QLabel("数据已载入"); self.lbl_status.setObjectName("muted")
         lay.addWidget(self.lbl_status)
@@ -799,6 +805,16 @@ class MainWindow(QMainWindow):
         self.refresh_all()
         self.refresh_inventory()
         self.do_search(self.search.text())
+
+    def open_skland(self):
+        dlg = SklandDialog(DB, self)
+        dlg.exec()
+        if getattr(dlg, "synced", 0):
+            self.refresh_all()
+            self.do_search(self.search.text())
+            self.lbl_hint.setText(f"已从森空岛同步 {dlg.synced} 名干员练度（现等级/技能/模组已预填）")
+        else:
+            self.do_search(self.search.text())
 
     def toggle_owned_filter(self):
         self.only_owned = not getattr(self, "only_owned", False)

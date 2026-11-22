@@ -87,6 +87,31 @@ tools\              重新抓取数据的说明
 docs\               截图
 ```
 
+## 森空岛登录（一键同步练度）
+
+顶栏 **森空岛** 按钮 → 两种登录方式：
+
+| 方式 | 操作 |
+| --- | --- |
+| 扫码登录 | 点「生成登录二维码」，用 **森空岛 App** 扫码（60 秒内有效）→ 自动换取 cred/token 并保存 |
+| 凭据登录 | 贴入抓包得到的 `cred` + `token` → 保存并读取角色 |
+
+登录后可读取账号下绑定的明日方舟角色，点「同步选中角色的练度」即把：
+
+- 精英阶段 `evolvePhase` → 现精英
+- 等级 `level` → 现等级
+- 技能等级 `mainSkillLvl` + 专精 `skills[].specializeLevel` → 技能/专精预填
+- 模组 `equip[].level` → 模组预填
+- 潜能 `potentialRank` → 潜能
+
+写进 `owned` 表，界面里带 `●` 标记，选干员时自动预填「现等级/精英阶段/技能/模组」，勾选目标即可算缺口。
+
+> 说明：森空岛接口**不提供仓库（材料数量）**，实时库存仍需用 MAA / penguin-statistics 导入。
+> 凭据保存在 `app/skland_cred.json`（已加入 .gitignore），可随时删除或退出登录失效。
+
+实现参考：[nonebot-plugin-skland](https://github.com/FrostN0v0/nonebot-plugin-skland) 的签名算法
+（`hmac_sha256(cred.token, path+query+ts+headers)` → `md5`）。
+
 ## 仓库结构
 
 ```

@@ -16,3 +16,5 @@ dist/
 app/arknights.db.bak
 _src/
 
+# 森空岛登录凭据（含账号 token，绝不提交）
+app/skland_cred.json
